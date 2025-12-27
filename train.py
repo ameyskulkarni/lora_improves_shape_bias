@@ -83,7 +83,6 @@ def main():
     
     # Load checkpoint if provided
     if args.checkpoint:
-        from peft import PeftModel
         base = model.base.get_base_model()
         model.base = PeftModel.from_pretrained(base, args.checkpoint)
         print(f"Loaded checkpoint from {args.checkpoint}")

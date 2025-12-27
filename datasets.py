@@ -6,6 +6,9 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 from torchvision.datasets import ImageFolder
 from PIL import Image
+from pathlib import Path
+from typing import Optional, Callable
+from torch.utils.data import Dataset
 
 
 class ImageNetV2Dataset(Dataset):
@@ -116,6 +119,180 @@ class ImageNetDataset(Dataset):
         return {"pixel_values": img, "labels": label}
 
 
+class ShapeStimuliDataset(Dataset):
+    """Dataset for shape-stimuli from model-vs-human repository.
+
+    Handles two different folder structures and label types:
+    1. Edge and silhouette: category-based folders, 16-class labels (0-15)
+    2. Other datasets: dnn/session-1 folders, ImageNet-1000 labels
+
+    Supports datasets: edge, silhouette, color, contrast, high-pass, low-pass,
+    phase-scrambling, power-equalization, false-color, rotation, eidolonI,
+    eidolonII, eidolonIII, uniform-noise, sketch.
+    """
+
+    # Mapping of dataset folder names to consistent names
+    DATASET_NAMES = {
+        'colour': 'color',
+        'contrast': 'contrast',
+        'edge': 'edge',
+        'false-colour': 'false-color',
+        'high-pass': 'high-pass',
+        'low-pass': 'low-pass',
+        'phase-scrambling': 'phase-scrambling',
+        'power-equalisation': 'power-equalization',
+        'rotation': 'rotation',
+        'silhouette': 'silhouette',
+        'sketch': 'sketch',
+        'eidolonI': 'eidolonI',
+        'eidolonII': 'eidolonII',
+        'eidolonIII': 'eidolonIII',
+        'uniform-noise': 'uniform-noise',
+        'stylized': 'stylized',
+    }
+
+    # Datasets with category-based folder structure
+    CATEGORY_FOLDER_DATASETS = {'edge', 'silhouette'}
+
+    # ImageNet-16 categories (used for dnn/session-1 datasets)
+    IMAGENET_16_CATEGORIES = {
+        'airplane': 404, 'bear': 294, 'bicycle': 671, 'bird': 14,
+        'boat': 472, 'bottle': 440, 'car': 817, 'cat': 282,
+        'chair': 559, 'clock': 409, 'dog': 254, 'elephant': 386,
+        'keyboard': 508, 'knife': 499, 'oven': 766, 'truck': 867,
+    }
+
+    # 16-class category indices (for edge and silhouette)
+    CATEGORY_TO_IDX_16CLASS = {
+        'airplane': 0, 'bear': 1, 'bicycle': 2, 'bird': 3,
+        'boat': 4, 'bottle': 5, 'car': 6, 'cat': 7,
+        'chair': 8, 'clock': 9, 'dog': 10, 'elephant': 11,
+        'keyboard': 12, 'knife': 13, 'oven': 14, 'truck': 15
+    }
+
+    def __init__(
+            self,
+            root: str,
+            dataset_name: str,
+            transform: Optional[Callable] = None,
+    ):
+        """
+        Args:
+            root: Path to shape-stimuli folder
+            dataset_name: Name of the dataset (e.g., 'edge', 'silhouette', 'color')
+            transform: Transform to apply to images
+        """
+        self.transform = transform
+        self.dataset_name = dataset_name
+        self.samples = []
+
+        # Datasets that use 16-class aggregation (labels are 0-15)
+        self.use_16_class = dataset_name in {'edge', 'silhouette'}
+
+        # Find the actual folder name (handle naming variations)
+        root_path = Path(root)
+        dataset_folder = None
+
+        for folder, name in self.DATASET_NAMES.items():
+            if name == dataset_name:
+                candidate = root_path / folder
+                if candidate.exists():
+                    dataset_folder = candidate
+                    break
+
+        if dataset_folder is None:
+            raise RuntimeError(
+                f"Dataset '{dataset_name}' not found in {root}. "
+                f"Expected folder: {root}/{dataset_name}/"
+            )
+
+        # Handle different folder structures
+        if dataset_name in self.CATEGORY_FOLDER_DATASETS:
+            # Structure: dataset_name/{category}/{category}N.png
+            self._load_category_folders(dataset_folder)
+        else:
+            # Structure: dataset_name/dnn/session-1/*.png
+            self._load_dnn_session(dataset_folder)
+
+        if len(self.samples) == 0:
+            raise RuntimeError(
+                f"No valid images found in {dataset_folder}. "
+                f"Check folder structure for {dataset_name}."
+            )
+
+        print(f"ShapeStimuliDataset ({dataset_name}): found {len(self.samples)} images")
+        if self.use_16_class:
+            print(f"  Using 16-class labels (0-15) with aggregation")
+
+    def _load_category_folders(self, dataset_folder: Path):
+        """Load images from category-based folder structure (edge, silhouette).
+
+        Structure: dataset_name/{category}/{category}N.png
+        Example: edge/airplane/airplane1.png
+
+        For edge/silhouette: labels are 0-15 (for 16-class aggregation)
+        """
+        for category in self.IMAGENET_16_CATEGORIES.keys():
+            category_dir = dataset_folder / category
+            if category_dir.exists():
+                # Find all images for this category
+                for img_path in sorted(category_dir.glob(f"{category}*.png")):
+                    if self.use_16_class:
+                        # For edge/silhouette: use 16-class index (0-15)
+                        label = self.CATEGORY_TO_IDX_16CLASS[category]
+                    else:
+                        # Shouldn't happen, but fallback to ImageNet ID
+                        label = self.IMAGENET_16_CATEGORIES[category]
+
+                    self.samples.append((str(img_path), label))
+
+    def _load_dnn_session(self, dataset_folder: Path):
+        """Load images from dnn/session-1 folder structure.
+
+        Structure: dataset_name/dnn/session-1/*.png
+        Filename format: XXXX_<prefix>_<category>_<suffix>.png
+
+        Labels are ImageNet class IDs (0-999)
+        """
+        session_path = dataset_folder / "dnn" / "session-1"
+
+        if not session_path.exists():
+            raise RuntimeError(
+                f"Expected folder not found: {session_path}. "
+                f"For most datasets, structure should be: dataset_name/dnn/session-1/"
+            )
+
+        # Collect all image files
+        for img_path in sorted(session_path.glob("*.png")):
+            # Extract category from filename
+            # Format: XXXX_<prefix>_<category>_<suffix>.png
+            # e.g., 0001_cl_dnn_cr_oven_40_n04111531_14126.png
+            parts = img_path.stem.split('_')
+            category = None
+
+            # Find the category in the filename
+            for part in parts:
+                if part in self.IMAGENET_16_CATEGORIES:
+                    category = part
+                    break
+
+            if category is not None:
+                # FIX: Use appropriate label based on evaluation method
+                label = self.CATEGORY_TO_IDX_16CLASS[category]
+
+                self.samples.append((str(img_path), label))
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        path, label = self.samples[idx]
+        img = Image.open(path).convert('RGB')
+        if self.transform:
+            img = self.transform(img)
+        return {"pixel_values": img, "labels": label}
+
+
 def get_transforms(processor, is_train: bool = True):
     """Get transforms compatible with ViT/DeiT processor.
 
@@ -149,47 +326,18 @@ def get_transforms(processor, is_train: bool = True):
     if is_train:
         return transforms.Compose([
             transforms.RandomResizedCrop(
-                size, interpolation=transforms.InterpolationMode.BICUBIC
+                size
             ),
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             normalize,
         ])
     return transforms.Compose([
-        transforms.Resize(eval_resize, interpolation=transforms.InterpolationMode.BICUBIC),
+        transforms.Resize(eval_resize),
         transforms.CenterCrop(size),
         transforms.ToTensor(),
         normalize,
     ])
-
-
-def create_dataloaders(
-    data_root: str,
-    processor,
-    variant: str = "stylized_imagenet",
-    batch_size: int = 64,
-    num_workers: int = 4,
-    **kwargs,
-) -> tuple[DataLoader, DataLoader]:
-    """Create train/val dataloaders (same variant for both)."""
-    train_ds = ImageNetDataset(
-        data_root, variant=variant, split="train",
-        transform=get_transforms(processor, is_train=True), **kwargs
-    )
-    val_ds = ImageNetDataset(
-        data_root, variant=variant, split="val",
-        transform=get_transforms(processor, is_train=False), **kwargs
-    )
-
-    train_loader = DataLoader(
-        train_ds, batch_size=batch_size, shuffle=True,
-        num_workers=num_workers, pin_memory=True, drop_last=True,
-    )
-    val_loader = DataLoader(
-        val_ds, batch_size=batch_size, shuffle=False,
-        num_workers=num_workers, pin_memory=True,
-    )
-    return train_loader, val_loader
 
 
 def create_dataloaders_mixed(
