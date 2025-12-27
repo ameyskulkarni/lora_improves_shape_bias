@@ -324,13 +324,13 @@ class ShapeBiasEvaluator:
         """
         results = {}
         summary = {}
-        # results = {
-        #     "imagenet": self.evaluate_imagenet(),
-        #     "imagenetv2": self.evaluate_imagenetv2(),
-        #     "stylized_imagenet": self.evaluate_stylized(),
-        #     "imagenet_sketch": self.evaluate_imagenet_sketch(),
-        #     "imagenet_c": self.evaluate_imagenet_c(),
-        # }
+        results = {
+            "imagenet": self.evaluate_imagenet(),
+            "imagenetv2": self.evaluate_imagenetv2(),
+            "stylized_imagenet": self.evaluate_stylized(),
+            "imagenet_sketch": self.evaluate_imagenet_sketch(),
+            "imagenet_c": self.evaluate_imagenet_c(),
+        }
 
         # Add cue-conflict shape bias if requested
         if include_shape_bias:
@@ -349,13 +349,13 @@ class ShapeBiasEvaluator:
                     summary[f"shape_stimuli/{key}"] = value
 
         # Summary metrics
-        # summary = {
-        #     "imagenet_acc": results["imagenet"]["accuracy"],
-        #     "imagenetv2_acc": results["imagenetv2"]["accuracy"],
-        #     "stylized_acc": results["stylized_imagenet"]["accuracy"],
-        #     "imagenet_sketch_acc": results["imagenet_sketch"]["accuracy"],
-        #     "imagenet_c_mean": results["imagenet_c"]["mean"],
-        # }
+        summary = {
+            "imagenet_acc": results["imagenet"]["accuracy"],
+            "imagenetv2_acc": results["imagenetv2"]["accuracy"],
+            "stylized_acc": results["stylized_imagenet"]["accuracy"],
+            "imagenet_sketch_acc": results["imagenet_sketch"]["accuracy"],
+            "imagenet_c_mean": results["imagenet_c"]["mean"],
+        }
 
         results["summary"] = summary
 
