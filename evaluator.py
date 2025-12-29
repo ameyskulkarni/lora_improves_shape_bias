@@ -308,11 +308,11 @@ class ShapeBiasEvaluator:
         return results
 
     def full_evaluation(
-        self,
-        log_wandb: bool = True,
-        prefix: str = "eval",
-        include_shape_bias: bool = True,
-        include_shape_stimuli: bool = True,
+            self,
+            log_wandb: bool = True,
+            prefix: str = "eval",
+            include_shape_bias: bool = True,
+            include_shape_stimuli: bool = True,
     ) -> Dict[str, any]:
         """Run full evaluation suite.
 
@@ -322,14 +322,21 @@ class ShapeBiasEvaluator:
             include_shape_bias: Whether to include cue-conflict shape bias evaluation
             include_shape_stimuli: Whether to include all 15 shape-stimuli datasets
         """
-        results = {}
-        summary = {}
         results = {
             "imagenet": self.evaluate_imagenet(),
             "imagenetv2": self.evaluate_imagenetv2(),
             "stylized_imagenet": self.evaluate_stylized(),
             "imagenet_sketch": self.evaluate_imagenet_sketch(),
             "imagenet_c": self.evaluate_imagenet_c(),
+        }
+
+        # Start building summary with core metrics
+        summary = {
+            "imagenet_acc": results["imagenet"]["accuracy"],
+            "imagenetv2_acc": results["imagenetv2"]["accuracy"],
+            "stylized_acc": results["stylized_imagenet"]["accuracy"],
+            "imagenet_sketch_acc": results["imagenet_sketch"]["accuracy"],
+            "imagenet_c_mean": results["imagenet_c"]["mean"],
         }
 
         # Add cue-conflict shape bias if requested
@@ -348,19 +355,32 @@ class ShapeBiasEvaluator:
                 if value is not None:
                     summary[f"shape_stimuli/{key}"] = value
 
-        # Summary metrics
-        summary = {
-            "imagenet_acc": results["imagenet"]["accuracy"],
-            "imagenetv2_acc": results["imagenetv2"]["accuracy"],
-            "stylized_acc": results["stylized_imagenet"]["accuracy"],
-            "imagenet_sketch_acc": results["imagenet_sketch"]["accuracy"],
-            "imagenet_c_mean": results["imagenet_c"]["mean"],
-        }
-
         results["summary"] = summary
 
         if log_wandb:
-            wandb.log({f"{prefix}/{k}": v for k, v in results["summary"].items()})
+            # Log core metrics under main prefix
+            core_metrics = {
+                f"{prefix}/imagenet_acc": summary["imagenet_acc"],
+                f"{prefix}/imagenetv2_acc": summary["imagenetv2_acc"],
+                f"{prefix}/stylized_acc": summary["stylized_acc"],
+                f"{prefix}/imagenet_sketch_acc": summary["imagenet_sketch_acc"],
+                f"{prefix}/imagenet_c_mean": summary["imagenet_c_mean"],
+            }
+
+            # Log shape bias under separate section if available
+            if "shape_bias" in summary:
+                core_metrics[f"{prefix}_shape-bias/shape_bias"] = summary["shape_bias"]
+
+            # Log shape-stimuli metrics under separate section if available
+            shape_stimuli_metrics = {}
+            for key, value in summary.items():
+                if key.startswith("shape_stimuli/"):
+                    metric_name = key.replace("shape_stimuli/", "")
+                    shape_stimuli_metrics[f"{prefix}_shape-stimuli/{metric_name}"] = value
+
+            # Combine and log all metrics
+            all_metrics = {**core_metrics, **shape_stimuli_metrics}
+            wandb.log(all_metrics)
 
         return results
 

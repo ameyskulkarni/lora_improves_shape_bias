@@ -9,6 +9,7 @@ from tqdm import tqdm
 from typing import Optional, Dict, Any
 import wandb
 from peft import PeftModel
+from evaluator import ShapeBiasEvaluator
 
 
 class LoRATrainer:
@@ -21,12 +22,14 @@ class LoRATrainer:
         val_loader,
         config: Dict[str, Any],
         device: str = "cuda",
+        evaluator_args: Optional[tuple] = None,
     ):
         self.model = model.to(device)
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.config = config
         self.device = device
+        self.evaluator_args = evaluator_args
 
         self.criterion = nn.CrossEntropyLoss()
         self.optimizer = AdamW(
@@ -109,7 +112,7 @@ class LoRATrainer:
 
             pbar.set_postfix(loss=loss.item(), acc=correct/total)
 
-            if self.global_step % self.config.get("log_every", 100) == 0:
+            if self.global_step % self.config.get("log_every", 100) == 0 or self.global_step == 1:
                 wandb.log({
                     "train/loss": loss.item(),
                     "train/acc": correct / total,
@@ -146,7 +149,7 @@ class LoRATrainer:
 
     def train(self, epochs: int, save_dir: Optional[str] = None):
         _ = self.validate()
-        for epoch in range(epochs):
+        for epoch in range(epochs+1):
             train_metrics = self.train_epoch(epoch, save_dir=save_dir)
             val_metrics = self.validate()
 
@@ -162,6 +165,31 @@ class LoRATrainer:
             # Save epoch checkpoint
             if save_dir:
                 self.save_checkpoint(save_dir, tag=f"epoch_{epoch}")
+
+            # ADD THIS BLOCK - Full evaluation after each epoch
+            if self.evaluator_args:
+                processor, data_root, batch_size = self.evaluator_args
+                evaluator = ShapeBiasEvaluator(
+                    self.model, processor, data_root,
+                    device=self.device, batch_size=batch_size,
+                )
+
+                # Run evaluation WITHOUT wandb logging (we'll log manually)
+                epoch_results = evaluator.full_evaluation(
+                    log_wandb=False,  # Don't log inside evaluator
+                )
+
+                # Manually log all metrics with consistent "eval/" prefix and epoch as step
+                eval_metrics = {}
+                for k, v in epoch_results["summary"].items():
+                    eval_metrics[f"eval/{k}"] = v
+
+                # Log with epoch number as the step - this creates the trend line
+                wandb.log(eval_metrics)
+
+                print(f"Epoch {epoch} eval summary:")
+                for k, v in epoch_results["summary"].items():
+                    print(f"  {k}: {v:.4f}")
 
         return {"best_val_acc": self.best_acc}
 

@@ -2,7 +2,8 @@
 import os
 from pathlib import Path
 from typing import Optional, Callable
-from torch.utils.data import DataLoader, Dataset
+import torch
+from torch.utils.data import DataLoader, Dataset, ConcatDataset
 from torchvision import transforms
 from torchvision.datasets import ImageFolder
 from PIL import Image
@@ -347,26 +348,73 @@ def create_dataloaders_mixed(
     val_variant: str = "imagenet",
     batch_size: int = 64,
     num_workers: int = 4,
+    generator: torch.Generator = None,
+    worker_init_fn = None,
 ) -> tuple[DataLoader, DataLoader]:
     """Create train/val dataloaders with different variants.
 
-    Typical use: train on stylized_imagenet, validate on normal ImageNet.
+    Typical uses:
+    - train_variant="imagenet", val_variant="imagenet" → Baseline
+    - train_variant="stylized_imagenet", val_variant="imagenet" → Shape bias
+    - train_variant="mixed", val_variant="mixed" → Joint training
     """
-    train_ds = ImageNetDataset(
-        data_root, variant=train_variant, split="train",
-        transform=get_transforms(processor, is_train=True),
-    )
-    val_ds = ImageNetDataset(
-        data_root, variant=val_variant, split="val",
-        transform=get_transforms(processor, is_train=False),
-    )
+    train_transform = get_transforms(processor, is_train=True)
+    val_transform = get_transforms(processor, is_train=False)
+
+    # Handle mixed training (ImageNet + Stylized)
+    if train_variant == "mixed":
+        print("Creating mixed training dataset (ImageNet + Stylized)")
+        imagenet_ds = ImageNetDataset(
+            data_root, variant="imagenet", split="train",
+            transform=train_transform,
+        )
+        stylized_ds = ImageNetDataset(
+            data_root, variant="stylized_imagenet", split="train",
+            transform=train_transform,
+        )
+        train_ds = ConcatDataset([imagenet_ds, stylized_ds])
+        print(f"  ImageNet: {len(imagenet_ds)} images")
+        print(f"  Stylized: {len(stylized_ds)} images")
+        print(f"  Total: {len(train_ds)} images")
+    else:
+        train_ds = ImageNetDataset(
+            data_root, variant=train_variant, split="train",
+            transform=train_transform,
+        )
+        print(f"Training dataset: {train_variant} ({len(train_ds)} images)")
+
+
+
+    if val_variant == "mixed":
+        print("Creating mixed val dataset (ImageNet + Stylized)")
+        val_imagenet_ds = ImageNetDataset(
+            data_root, variant="imagenet", split="val",
+            transform=val_transform,
+        )
+        val_stylized_ds = ImageNetDataset(
+            data_root, variant="stylized_imagenet", split="val",
+            transform=val_transform,
+        )
+        val_ds = ConcatDataset([val_imagenet_ds, val_stylized_ds])
+        print(f"  ImageNet: {len(val_imagenet_ds)} images")
+        print(f"  Stylized: {len(val_stylized_ds)} images")
+        print(f"  Total: {len(val_ds)} images")
+    else:
+        val_ds = ImageNetDataset(
+            data_root, variant=val_variant, split="val",
+            transform=val_transform,
+        )
+        print(f"Val dataset: {val_variant} ({len(val_ds)} images)")
+
 
     train_loader = DataLoader(
         train_ds, batch_size=batch_size, shuffle=True,
-        num_workers=num_workers, pin_memory=True, drop_last=True,
+        num_workers=num_workers, pin_memory=True, drop_last=True, generator=generator,
+        worker_init_fn=worker_init_fn,
     )
     val_loader = DataLoader(
         val_ds, batch_size=batch_size, shuffle=False,
-        num_workers=num_workers, pin_memory=True,
+        num_workers=num_workers, pin_memory=True, generator=generator,
+        worker_init_fn=worker_init_fn,
     )
     return train_loader, val_loader

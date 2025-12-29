@@ -1,7 +1,7 @@
 """Train LoRA for shape bias on Stylized ImageNet."""
 import argparse
 import os
-import sys
+import torch
 
 import torch
 import wandb
@@ -11,18 +11,20 @@ from vit_lora import create_vit_lora, ShapeBiasViT
 from datasets import create_dataloaders_mixed
 from lora_trainer import LoRATrainer
 from evaluator import ShapeBiasEvaluator
+from seed_setting import set_seed, get_generator
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
     # Data
     parser.add_argument("--data-root", type=str, required=True)
-    parser.add_argument("--train-variant", type=str, default="stylized_imagenet")
-    parser.add_argument("--val-variant", type=str, default="imagenet")
+    parser.add_argument("--train-variant", type=str, default="stylized_imagenet", help="Can be specific datasets or 'mixed'. mixed currently combines imagenet+stylized_imagenet")
+    parser.add_argument("--val-variant", type=str, default="imagenet", help="Can be specific datasets or 'mixed'. mixed currently combines imagenet+stylized_imagenet")
     # Model
     parser.add_argument("--model-name", type=str, default="facebook/deit-tiny-patch16-224")
     parser.add_argument("--lora-r", type=int, default=16)
     parser.add_argument("--lora-alpha", type=int, default=32)
+    parser.add_argument("--lora-dropout", type=float, default=0.1)
     # Training
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--batch-size", type=int, default=128)
@@ -31,9 +33,13 @@ def parse_args():
     parser.add_argument("--warmup-ratio", type=float, default=0.1)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--fp16", action="store_true", default=True)
+    parser.add_argument("--seed", type=int, default=42,
+                        help="Random seed for reproducibility")
     # Logging & Checkpointing
     parser.add_argument("--wandb-project", type=str, default="lora-shape-bias")
     parser.add_argument("--run-name", type=str, default="deit-tiny-stylized")
+    parser.add_argument("--tags", type=str, default="",
+                        help="Comma-separated tags (e.g., baseline,experiment1)")
     parser.add_argument("--save-dir", type=str, default="checkpoints")
     parser.add_argument("--log-every", type=int, default=100)
     parser.add_argument("--save-every", type=int, default=None, help="Save checkpoint every N steps")
@@ -58,6 +64,11 @@ def print_comparison(before: dict, after: dict):
 
 def main():
     args = parse_args()
+
+    # SET SEED FIRST (before any random operations)
+    seed_worker = set_seed(args.seed, deterministic=True)
+    g = get_generator(args.seed)
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     # Create save directory: checkpoints/{run_name}/
@@ -69,7 +80,11 @@ def main():
     wandb.init(
         project=args.wandb_project,
         name=args.run_name,
-        config=vars(args),
+        tags=[tag.strip() for tag in args.tags.split(",") if tag.strip()],
+        config={
+            **vars(args),  # Includes seed
+            "seed": args.seed,
+        },
     )
     
     # Create model
@@ -78,6 +93,7 @@ def main():
         model_name=args.model_name,
         lora_r=args.lora_r,
         lora_alpha=args.lora_alpha,
+        lora_dropout=args.lora_dropout,
     )
     model = ShapeBiasViT(base_model)
     
@@ -95,6 +111,8 @@ def main():
         val_variant=args.val_variant,  # normal ImageNet for validation
         batch_size=args.batch_size,
         num_workers=args.num_workers,
+        generator=g,
+        worker_init_fn=seed_worker,
     )
     
     if args.eval_only:
@@ -139,7 +157,7 @@ def main():
         "val_variant": args.val_variant,
     }
     
-    trainer = LoRATrainer(model, train_loader, val_loader, config, device)
+    trainer = LoRATrainer(model, train_loader, val_loader, config, device, evaluator_args=(processor, args.data_root, args.batch_size))
     
     print("Starting training...")
     trainer.train(args.epochs, save_dir=save_dir)

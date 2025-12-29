@@ -5,12 +5,12 @@ from transformers import ViTForImageClassification, ViTImageProcessor
 from peft import LoraConfig, get_peft_model
 
 
-def get_lora_config(r: int = 16, alpha: int = 32) -> LoraConfig:
+def get_lora_config(r: int = 16, alpha: int = 32, dropout: float = 0.1) -> LoraConfig:
     """LoRA config targeting all attention + MLP layers."""
     return LoraConfig(
         r=r,
         lora_alpha=alpha,
-        lora_dropout=0.1,
+        lora_dropout=dropout,
         bias="none",
         target_modules=[
             "query", "key", "value",
@@ -24,6 +24,7 @@ def create_vit_lora(
     num_classes: int = 1000,
     lora_r: int = 16,
     lora_alpha: int = 32,
+    lora_dropout: float = 0.1,
     freeze_base: bool = True,
 ) -> tuple[nn.Module, ViTImageProcessor]:
     """Create ViT-Tiny with LoRA adapters."""
@@ -36,7 +37,7 @@ def create_vit_lora(
         for param in model.parameters():
             param.requires_grad = False
     
-    lora_config = get_lora_config(r=lora_r, alpha=lora_alpha)
+    lora_config = get_lora_config(r=lora_r, alpha=lora_alpha, dropout=lora_dropout)
     model = get_peft_model(model, lora_config)
     model.print_trainable_parameters()
     
