@@ -18,8 +18,8 @@ def parse_args():
     parser = argparse.ArgumentParser()
     # Data
     parser.add_argument("--data-root", type=str, required=True)
-    parser.add_argument("--train-variant", type=str, default="stylized_imagenet", help="Can be specific datasets or 'mixed'. mixed currently combines imagenet+stylized_imagenet")
-    parser.add_argument("--val-variant", type=str, default="imagenet", help="Can be specific datasets or 'mixed'. mixed currently combines imagenet+stylized_imagenet")
+    parser.add_argument("--train-variant", type=str, default="imagenet", help="Can be specific datasets or 'mixed_stylized', 'mixed_depth', 'mixed_all', 'depth'. mixed_stylized combines imagenet+stylized_imagenet")
+    parser.add_argument("--val-variant", type=str, default="imagenet", help="Can be specific datasets or 'mixed_stylized', 'mixed_depth', 'mixed_all', 'depth'. mixed_stylized combines imagenet+stylized_imagenet")
     # Model
     parser.add_argument("--model-name", type=str, default="facebook/deit-tiny-patch16-224")
     parser.add_argument("--lora-r", type=int, default=16)
